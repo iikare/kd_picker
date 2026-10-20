@@ -17,6 +17,9 @@ all: kd_picker
 kd_picker: main.cc
 	$(CXX) $(CXXFLAGS) -fno-exceptions -o $@ $< $(LDLIBS)
 
+re: clean
+	@$(MAKE) --no-print-directory
+
 clean:
 	rm -f kd_picker
 

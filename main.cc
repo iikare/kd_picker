@@ -1293,7 +1293,7 @@ static map<string, kanji_readings> load_learned_kanji(const string& db_path, con
   const char* sql = "SELECT n.mid, n.flds, c.queue, c.did FROM notes n JOIN cards c ON c.nid=n.id";
   rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
   sql_check(rc, db, "prepare anki card query");
-  size_t eligible_card_rows = 0, eligible_notes = 0;
+  size_t eligible_card_rows = 0;//, eligible_notes = 0;
   set<pair<string, string>> seen_note_kanji;
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     const unsigned char* mid_text = sqlite3_column_text(stmt, 0);
@@ -1329,7 +1329,7 @@ static map<string, kanji_readings> load_learned_kanji(const string& db_path, con
     ++eligible_card_rows;
     const auto marker = make_pair(mid, kanji);
     if (seen_note_kanji.insert(marker).second) {
-      ++eligible_notes;
+      //++eligible_notes;
     }
     kanji_readings& out = learned[kanji];
     if (f.on1 >= 0 && static_cast<size_t>(f.on1) < values.size()) {
