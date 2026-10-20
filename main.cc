@@ -1243,7 +1243,7 @@ public:
             else if (ev.type == ConfigureNotify) draw();
             else if (ev.type == KeyPress) {
                 KeySym key = XLookupKeysym(&ev.xkey, 0);
-                if (key == XK_q || key == XK_Escape) running = false;
+                if (key == XK_q || key == XK_Escape || key == XK_F7) running = false;
                 else if (key == XK_1) { show_reading = true; draw(); }
                 else if (key == XK_2) { show_meaning = true; draw(); }
                 else if (key == XK_n || key == XK_space || key == XK_Return) { select_next(true); draw(); }
@@ -1349,7 +1349,7 @@ private:
             draw_centered(attr.height - 82,
                           "eligible words: " + to_string(words.size()), 2);
         }
-        draw_centered(attr.height - 52, "space/n: next     r: hide answers     q: quit", 2);
+        draw_centered(attr.height - 52, "space/n: next     r: hide answers     q/f7: quit", 2);
     }
 
     void close() {
