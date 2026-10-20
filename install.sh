@@ -7,8 +7,11 @@ echo
 # install
 echo "installing to ~/.local/bin/"
 mkdir -p ~/.local/bin/ 
+mkdir -p ~/.local/share/kd_picker/
 
 cp kd_picker ~/.local/bin/ 
+cp kd_picker.conf ~/.local/share/kd_picker/
+cp vocab.tsv ~/.local/share/kd_picker/
 
 # .desktop entry
 echo "create .desktop entry"

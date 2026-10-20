@@ -1788,7 +1788,7 @@ class picker_window {
 int main(int argc, char** argv) {
   bool list_note_types = false;
   bool list_decks = false;
-  string config_path = "kd_picker.conf";
+  string config_path = "~/.local/share/kd_picker/kd_picker.conf";
   if (argc >= 2 && (string(argv[1]) == "--list-note-types" || string(argv[1]) == "--list-decks")) {
     list_note_types = string(argv[1]) == "--list-note-types";
     list_decks = string(argv[1]) == "--list-decks";
@@ -1809,10 +1809,12 @@ int main(int argc, char** argv) {
       config_path = argv[1];
     }
   }
-  const app_config config = load_config(config_path);
-  logQ("config file:", absolute(expand_home_prefix(config_path)).lexically_normal().string());
-  ;
 
+  const string resolved_config_path =
+      absolute(expand_home_prefix(config_path)).lexically_normal().string();
+
+  const app_config config = load_config(resolved_config_path);
+  logQ("config file:", resolved_config_path);
   if (list_note_types) {
     logQ(describe_models(load_models_from_collection(config.anki_collection_path)));
     return 0;
