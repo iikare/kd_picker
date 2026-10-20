@@ -1,0 +1,5 @@
+anki_collection_path = "~/.local/share/Anki2/REPLACE_WITH_YOUR_PROFILE/collection.anki2"
+vocab_tsv_path = "vocab.tsv"
+kd_model_name_hint = ""
+# run './kd_picker --list-decks' to inspect names
+kd_deck_name_hint = ""
