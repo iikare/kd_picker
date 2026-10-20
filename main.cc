@@ -27,10 +27,10 @@
 #include <utility>
 #include <vector>
 
+#include "log.h"
+
 using std::filesystem::absolute;
 using std::any_of;
-using std::cerr;
-using std::cout;
 using std::function;
 using std::getenv;
 using std::getline;
@@ -54,6 +54,7 @@ using std::set;
 using std::shuffle;
 using std::sort;
 using std::string;
+using std::to_string;
 using std::swap;
 using std::to_string;
 using std::tolower;
@@ -61,7 +62,7 @@ using std::unordered_map;
 using std::vector;
 
 [[noreturn]] static void fatal_error(const string& message) {
-    cerr << "error: " << message << "\n";
+    logW(LL_CRIT, "error:", message);
     std::exit(1);
 }
 
@@ -146,7 +147,7 @@ static app_config load_config(const string& config_path) {
     if (!input) {
         fatal_error(
             "cannot open config file '" + expanded_config_path +
-            "' -- create kd_picker.conf using kd_picker.conf.example as a template.");
+            "' -- create kd_picker.conf using kd_picker.conf.example as a template");
     }
 
     const path absolute_config_path =
@@ -776,7 +777,7 @@ static vector<anki_model> load_models_from_db(sqlite3* db) {
 
 static string describe_models(const vector<anki_model>& models) {
     ostringstream out;
-    if (models.empty()) return "no note types or fields could be read from this anki collection.";
+    if (models.empty()) return "no note types or fields could be read from this anki collection";
     out << "note types and fields found in the collection:\n";
     for (const auto& model : models) {
         out << "  - " << (model.name.empty() ? "(unnamed note type)" : model.name)
@@ -917,7 +918,7 @@ static map<string, kanji_readings> load_learned_kanji(
         sqlite3_close(db);
         fatal_error(
             "could not read anki note-type metadata. Try running "
-            "'./kd_picker --list-note-types' and check your anki version/collection path.");
+            "'./kd_picker --list-note-types' and check your anki version/collection path");
     }
     unordered_map<string, anki_model> model_by_id;
     unordered_map<string, string> name_by_id;
@@ -956,10 +957,10 @@ static map<string, kanji_readings> load_learned_kanji(
         sqlite3_close(db);
         fatal_error(
             "no matching kanjidamage note type found. expected a note type with a 'Kanji' field, "
-            "at least one 'Onyomi'field, and at least one 'Kunyomi' field.\n"
+            "at least one 'Onyomi' field, and at least one 'Kunyomi' field.\n"
             "check the note type's field names or set kd_model_name_hint in kd_picker.conf.\n\n" +
             diagnostic +
-            "you can also run './kd_picker --list-note-types' to list fields without launching the quiz.");
+            "you can also run './kd_picker --list-note-types' to list fields without launching the quiz");
     }
 
     set<string> selected_deck_ids;
@@ -976,19 +977,20 @@ static map<string, kanji_readings> load_learned_kanji(
         if (selected_deck_ids.empty()) {
             ostringstream message;
             message << "kd_deck_name_hint='" << deck_name_hint
-                    << "' did not match any deck in the anki collection.";
+                    << "' did not match any deck in the anki collection";
             if (!decks.empty()) {
                 message << " available decks:";
                 for (const auto& entry : decks) message << "\n  - " << entry.second;
             } else {
-                message << " aeck metadata could not be read from this collection.";
+                message << " metadata could not be read from this collection";
             }
             sqlite3_close(db);
             fatal_error(message.str());
         }
-        cerr << "restricting cards to deck name match '" << deck_name_hint << "':";
-        for (const auto& deck_name : matching_deck_names) cerr << " '" << deck_name << "'";
-        cerr << "\n";
+        logW(LL_INFO, "restricting cards to deck name match '" + deck_name_hint + "':");
+        for (const auto& deck_name : matching_deck_names) {
+          logQ(deck_name);
+        }
     }
 
     map<string, kanji_readings> learned;
@@ -1051,10 +1053,11 @@ static map<string, kanji_readings> load_learned_kanji(
         if (it->second.readings.empty()) it = learned.erase(it);
         else ++it;
     }
-    cerr << "detected kanjidamage note types:";
-    for (const auto& m : selected_models) cerr << " '" << m << "'";
-    cerr << "\neligible card rows: " << eligible_card_rows
-              << "; kanji with parsed readings: " << learned.size() << "\n";
+    logW(LL_INFO, "detected kanjidamage note types:");
+    for (const auto& m : selected_models) {
+      logW(LL_INFO, m);
+    }
+    logW(LL_INFO, "eligible card rows:", eligible_card_rows, "| kanji with parsed readings:", learned.size());
     return learned;
 }
 
@@ -1073,7 +1076,7 @@ static vector<vocab_word> load_vocab(const string& path) {
         if (line.empty() || starts_with(line, "#")) continue;
         auto cols = split(line, '\t');
         if (cols.size() < 3) {
-            cerr << "skipping vocab line " << line_no << ": expected 3 tab-separated columns.\n";
+            logW(LL_INFO, "skipping vocab line", line_no, "- expected 3 tab-separated columns");
             continue;
         }
         string written = trim(cols[0]);
@@ -1094,10 +1097,11 @@ static vector<vocab_word> load_vocab(const string& path) {
         }
         words.push_back({written, reading, meaning, extract_kanji(written)});
     }
-    cerr << "vocabulary loader: accepted " << words.size()
-              << "; skipped single-kanji-only entries: " << skipped_single_kanji
-              << "; skipped unsupported written forms: " << skipped_written_form
-              << "; skipped invalid reading/meaning: " << skipped_reading_or_meaning << "\n";
+    logW(LL_INFO, "vocabulary loader:");
+    logW(LL_INFO, "accepted -", words.size());
+		logW(LL_INFO, "skipped single-kanji-only entries -", skipped_single_kanji);
+		logW(LL_INFO, "skipped unsupported written forms -", skipped_written_form);
+		logW(LL_INFO, "skipped invalid reading/meaning -", skipped_reading_or_meaning);
     return words;
 }
 
@@ -1193,7 +1197,7 @@ class picker_window {
 public:
     picker_window(const vector<vocab_word>& words)
         : words(words), rng(random_device{}()) {
-        if (words.empty()) fatal_error("there are no eligible vocabulary entries to display.");
+        if (words.empty()) fatal_error("there are no eligible vocabulary entries to display");
         display = XOpenDisplay(nullptr);
         if (!display) fatal_error("could not open X display, is an X11 session running?");
         screen = DefaultScreen(display);
@@ -1210,7 +1214,7 @@ public:
         font_medium = XftFontOpenName(display, screen, "sans:lang=ja:size=23");
         font_small = XftFontOpenName(display, screen, "sans:lang=ja:size=14");
         if (!font_large || !font_medium || !font_small) {
-            close(); fatal_error("could not open Xft fonts -- install a Japanese-capable font and libxft-dev.");
+            close(); fatal_error("could not open Xft fonts -- install a Japanese-capable font and libxft-dev");
         }
 #else
         char** missing = nullptr;
@@ -1220,7 +1224,7 @@ public:
                                   &missing, &missing_count, &default_string);
         if (missing) XFreeStringList(missing);
         if (!font_set) {
-            close(); fatal_error("could not create an X11 font set -- install libxft-dev for reliable Japanese text rendering.");
+            close(); fatal_error("could not create an X11 font set -- install libxft-dev for reliable Japanese text rendering");
         }
 #endif
         XMapWindow(display, window);
@@ -1379,30 +1383,32 @@ int main(int argc, char** argv) {
         list_decks = string(argv[1]) == "--list-decks";
         if (argc >= 3) config_path = argv[2];
         if (argc > 3) {
-            cerr << "usage: " << argv[0] << " [--list-note-types|--list-decks [config_file]]\n";
+            logW(LL_CRIT, "usage:", argv[0], "[--list-note-types|--list-decks [config_file]]");
             return 2;
         }
     } else {
         if (argc > 2) {
-            cerr << "usage: " << argv[0] << " [config_file]\n";
+            logW(LL_CRIT, "usage:", argv[0], "[config_file]");
             return 2;
         }
         if (argc == 2) config_path = argv[1];
     }
     const app_config config = load_config(config_path);
-    cerr << "config file: " << absolute(expand_home_prefix(config_path)).lexically_normal().string() << "\n";
+    logQ("config file:", absolute(expand_home_prefix(config_path)).lexically_normal().string());;
 
     if (list_note_types) {
-        cout << describe_models(load_models_from_collection(config.anki_collection_path));
+        logQ(describe_models(load_models_from_collection(config.anki_collection_path)));
         return 0;
     }
     if (list_decks) {
         const auto decks = load_decks_from_collection(config.anki_collection_path);
         if (decks.empty()) {
-            cout << "no deck names could be read from this anki collection.\n";
+            logQ("no deck names could be read from this anki collection");
         } else {
-            cout << "decks found in the collection (ID: name):\n";
-            for (const auto& deck : decks) cout << "  " << deck.first << ": " << deck.second << "\n";
+            logQ("decks found in the collection (ID: name):");
+            for (const auto& deck : decks) {
+              logQ(deck.first, "-", deck.second);
+            }
         }
         return 0;
     }
@@ -1431,12 +1437,12 @@ int main(int argc, char** argv) {
         }
         eligible.push_back(word);
     }
-    cerr << "vocabulary rows: " << vocab.size()
-              << "; eligible words: " << eligible.size()
-              << "; rejected for unknown kanji: " << rejected_no_known_kanji
-              << "; rejected for unsupported reading segmentation: " << rejected_reading << "\n";
+    logW(LL_INFO, "vocabulary rows:", vocab.size());
+		logW(LL_INFO, "eligible words:", eligible.size());
+		logW(LL_INFO, "rejected for unknown kanji:", rejected_no_known_kanji);
+		logW(LL_INFO, "rejected for unsupported reading segmentation:", rejected_reading);
     if (eligible.empty()) {
-        cerr << "no words passed the reading filter -- verify the vocab TSV, config paths, note field names, and anki review state.\n";
+        logW(LL_WARN, "no words passed the reading filter -- verify the vocab TSV, config paths, note field names, and anki review state");
         return 1;
     }
     picker_window app(eligible);
