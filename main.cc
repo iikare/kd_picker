@@ -1057,6 +1057,7 @@ static map<string, kanji_readings> load_learned_kanji(
     for (const auto& m : selected_models) {
       logW(LL_INFO, m);
     }
+    logE();
     logW(LL_INFO, "eligible card rows:", eligible_card_rows, "| kanji with parsed readings:", learned.size());
     return learned;
 }
@@ -1097,6 +1098,7 @@ static vector<vocab_word> load_vocab(const string& path) {
         }
         words.push_back({written, reading, meaning, extract_kanji(written)});
     }
+    logE();
     logW(LL_INFO, "vocabulary loader:");
     logW(LL_INFO, "accepted -", words.size());
 		logW(LL_INFO, "skipped single-kanji-only entries -", skipped_single_kanji);
@@ -1437,6 +1439,7 @@ int main(int argc, char** argv) {
         }
         eligible.push_back(word);
     }
+    logE();
     logW(LL_INFO, "vocabulary rows:", vocab.size());
 		logW(LL_INFO, "eligible words:", eligible.size());
 		logW(LL_INFO, "rejected for unknown kanji:", rejected_no_known_kanji);

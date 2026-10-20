@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        description: Format C, C++, and Obj-C files using clang-format.
+        entry: clang-format
+        language: system
+        files: \.(c|cc|cpp|cxx|h|hpp)$
