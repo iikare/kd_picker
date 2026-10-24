@@ -13,7 +13,7 @@ required libraries -- `libsqlite3-dev libx11-dev libxft-dev fonts-noto-cjk`
 
 ```
 make
-./kanji_word_picker
+./kd_picker
 ```
 
 # controls
