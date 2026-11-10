@@ -7,7 +7,7 @@ use `kd_picker.conf` to specify file paths.
 
 run `./vocab.sh` to download and filter the CORE 2.3k deck.
 
-required libraries -- `libsqlite3-dev libx11-dev libxft-dev fonts-noto-cjk`
+required libraries -- `libsqlite3-dev libx11-dev libxft-dev fonts-noto-cjk` and the yanone kaffeesatz font
 
 # build
 

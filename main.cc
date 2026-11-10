@@ -1,6 +1,7 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <sqlite3.h>
+#include <unistd.h>
 
 #if __has_include(<X11/Xft/Xft.h>)
   #define KD_PICKER_HAVE_XFT 1
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -23,6 +25,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -57,6 +60,7 @@ using std::to_string;
 using std::tolower;
 using std::unordered_map;
 using std::vector;
+using std::error_code;
 using std::filesystem::absolute;
 using std::filesystem::path;
 
@@ -921,6 +925,49 @@ static map<string, string> parse_decks(const string& json) {
   return decks;
 }
 
+static path g_snapshot_dir;
+
+static void remove_collection_snapshot() {
+  if (!g_snapshot_dir.empty()) {
+    error_code ec;
+    std::filesystem::remove_all(g_snapshot_dir, ec);
+    g_snapshot_dir.clear();
+  }
+}
+
+// anki holds an exclusive lock on its collection while running, so read from a private copy instead.
+static string snapshot_collection(const string& db_path) {
+  error_code ec;
+  const path temp_root = std::filesystem::temp_directory_path(ec);
+  if (ec) {
+    fatal_error("could not find a temp directory: " + ec.message());
+  }
+  g_snapshot_dir = temp_root / ("kd_picker_" + to_string(getpid()));
+  std::filesystem::remove_all(g_snapshot_dir, ec);
+  std::filesystem::create_directories(g_snapshot_dir, ec);
+  if (ec) {
+    fatal_error("could not create '" + g_snapshot_dir.string() + "': " + ec.message());
+  }
+  std::atexit(remove_collection_snapshot);
+
+  const path source(db_path);
+  const path copy = g_snapshot_dir / source.filename();
+  std::filesystem::copy_file(source, copy, ec);
+  if (ec) {
+    fatal_error("cannot copy anki collection at '" + db_path + "': " + ec.message());
+  }
+
+  // the wal holds reviews anki has not yet checkpointed into the main file.
+  const path wal(db_path + "-wal");
+  if (std::filesystem::exists(wal, ec)) {
+    std::filesystem::copy_file(wal, path(copy.string() + "-wal"), ec);
+    if (ec) {
+      logW(LL_WARN, "could not copy anki wal file, recent reviews may be missing:", ec.message());
+    }
+  }
+  return copy.string();
+}
+
 static int sqlite_unicase_compare(void*, int left_size, const void* left_data, int right_size,
                                   const void* right_data) {
   const auto* left = static_cast<const unsigned char*>(left_data);
@@ -1391,8 +1438,8 @@ static vector<vocab_word> load_vocab(const string& path) {
   vector<vocab_word> words;
   string line;
   size_t line_no = 0;
-  size_t skipped_single_kanji = 0;
-  size_t skipped_written_form = 0;
+  size_t count_only_single_kanji = 0;
+  size_t count_only_written_form = 0;
   size_t skipped_reading_or_meaning = 0;
   while (getline(in, line)) {
     ++line_no;
@@ -1411,25 +1458,23 @@ static vector<vocab_word> load_vocab(const string& path) {
     if (lower_ascii(written) == "word" || written == "表記" || lower_ascii(written) == "kanji") {
       continue;
     }
-    if (is_single_kanji_only(written)) {
-      ++skipped_single_kanji;
-      continue;
-    }
-    if (!is_valid_written_form(written)) {
-      ++skipped_written_form;
-      continue;
-    }
-    if (!all_kana(reading) || meaning.empty()) {
+    if (written.empty() || !all_kana(reading) || meaning.empty()) {
       ++skipped_reading_or_meaning;
       continue;
+    }
+    if (is_single_kanji_only(written)) {
+      ++count_only_single_kanji;
+    }
+    else if (!is_valid_written_form(written)) {
+      ++count_only_written_form;
     }
     words.push_back({written, reading, meaning, extract_kanji(written)});
   }
   logE();
   logW(LL_INFO, "vocabulary loader:");
   logW(LL_INFO, "accepted -", words.size());
-  logW(LL_INFO, "skipped single-kanji-only entries -", skipped_single_kanji);
-  logW(LL_INFO, "skipped unsupported written forms -", skipped_written_form);
+  logW(LL_INFO, "single-kanji-only entries (count only) -", count_only_single_kanji);
+  logW(LL_INFO, "kana-only or other written forms (count only) -", count_only_written_form);
   logW(LL_INFO, "skipped invalid reading/meaning -", skipped_reading_or_meaning);
   return words;
 }
@@ -1533,9 +1578,41 @@ static bool word_reading_covered(const vocab_word& word, const map<string, kanji
   return solve(0, 0);
 }
 
+// decide whether a word the picker never shows (kana-only, single kanji, 々 repeats) is known.
+static bool count_only_word_known(const vocab_word& word, const map<string, kanji_readings>& learned) {
+  if (all_kana(word.written)) {
+    return true;
+  }
+  if (is_single_kanji_only(word.written)) {
+    return learned.count(word.written) > 0;
+  }
+
+  // expand the 々 iteration mark into the kanji it repeats.
+  vector<uint32_t> expanded;
+  for (uint32_t cp : utf8_to_codepoints(word.written)) {
+    if (cp == 0x3005 && !expanded.empty()) {
+      cp = expanded.back();
+    }
+    expanded.push_back(cp);
+  }
+  vocab_word expanded_word = word;
+  expanded_word.written = codepoints_to_utf8(expanded);
+  expanded_word.kanji = extract_kanji(expanded_word.written);
+  if (!is_valid_written_form(expanded_word.written)) {
+    return false;
+  }
+  for (const auto& kanji : expanded_word.kanji) {
+    if (!learned.count(kanji)) {
+      return false;
+    }
+  }
+  return word_reading_covered(expanded_word, learned);
+}
+
 class picker_window {
  public:
-  picker_window(const vector<vocab_word>& words) : words(words), rng(random_device{}()) {
+  picker_window(const vector<vocab_word>& words, size_t known_words, size_t total_words)
+      : words(words), known_words(known_words), total_words(total_words), rng(random_device{}()) {
     if (words.empty()) {
       fatal_error("there are no eligible vocabulary entries to display");
     }
@@ -1557,7 +1634,10 @@ class picker_window {
     font_large = XftFontOpenName(display, screen, "sans:lang=ja:size=42");
     font_medium = XftFontOpenName(display, screen, "sans:lang=ja:size=23");
     font_small = XftFontOpenName(display, screen, "sans:lang=ja:size=14");
-    if (!font_large || !font_medium || !font_small) {
+    latin_large = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=46");
+    latin_medium = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=27");
+    latin_small = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=17");
+    if (!font_large || !font_medium || !font_small || !latin_large || !latin_medium || !latin_small) {
       close();
       fatal_error("could not open Xft fonts -- install a Japanese-capable font and libxft-dev");
     }
@@ -1622,6 +1702,8 @@ class picker_window {
 
  private:
   const vector<vocab_word>& words;
+  size_t known_words = 0;
+  size_t total_words = 0;
   mt19937 rng;
   vector<size_t> bag;
   size_t current = 0;
@@ -1636,6 +1718,9 @@ class picker_window {
   XftFont* font_large = nullptr;
   XftFont* font_medium = nullptr;
   XftFont* font_small = nullptr;
+  XftFont* latin_large = nullptr;
+  XftFont* latin_medium = nullptr;
+  XftFont* latin_small = nullptr;
   XftColor xft_draw_color{};
 #else
   XFontSet font_set = nullptr;
@@ -1672,11 +1757,46 @@ class picker_window {
     }
   }
 
+#if KD_PICKER_HAVE_XFT
+  // japanese text keeps the cjk font, everything else uses yanone kaffeesatz.
+  static bool uses_jp_font(uint32_t cp) { return cp >= 0x2E80; }
+
+  XftFont* pick_font(bool jp, int size_type) const {
+    if (jp) {
+      return size_type == 0 ? font_large : (size_type == 1 ? font_medium : font_small);
+    }
+    return size_type == 0 ? latin_large : (size_type == 1 ? latin_medium : latin_small);
+  }
+
+  // split text into runs that share a font and hand each run to the callback.
+  void for_each_font_run(const string& s, int size_type, const function<void(XftFont*, const string&)>& fn) {
+    vector<uint32_t> run;
+    bool run_jp = false;
+    for (uint32_t cp : utf8_to_codepoints(s)) {
+      const bool jp = uses_jp_font(cp);
+      if (!run.empty() && jp != run_jp) {
+        fn(pick_font(run_jp, size_type), codepoints_to_utf8(run));
+        run.clear();
+      }
+      run_jp = jp;
+      run.push_back(cp);
+    }
+    if (!run.empty()) {
+      fn(pick_font(run_jp, size_type), codepoints_to_utf8(run));
+    }
+  }
+#endif
+
   void draw_utf8(int x, int y, const string& s, int size_type) {
 #if KD_PICKER_HAVE_XFT
-    XftFont* font = size_type == 0 ? font_large : (size_type == 1 ? font_medium : font_small);
-    XftDrawStringUtf8(xft_draw, &xft_draw_color, font, x, y, reinterpret_cast<const FcChar8*>(s.data()),
-                      static_cast<int>(s.size()));
+    for_each_font_run(s, size_type, [&](XftFont* font, const string& run) {
+      XftDrawStringUtf8(xft_draw, &xft_draw_color, font, x, y, reinterpret_cast<const FcChar8*>(run.data()),
+                        static_cast<int>(run.size()));
+      XGlyphInfo extents{};
+      XftTextExtentsUtf8(display, font, reinterpret_cast<const FcChar8*>(run.data()),
+                         static_cast<int>(run.size()), &extents);
+      x += extents.xOff;
+    });
 #else
     (void)size_type;
     Xutf8DrawString(display, window, font_set, gc, x, y, s.data(), static_cast<int>(s.size()));
@@ -1685,11 +1805,14 @@ class picker_window {
 
   int estimate_text_width(const string& text, int size_type) {
 #if KD_PICKER_HAVE_XFT
-    XGlyphInfo extents{};
-    XftFont* font = size_type == 0 ? font_large : (size_type == 1 ? font_medium : font_small);
-    XftTextExtentsUtf8(display, font, reinterpret_cast<const FcChar8*>(text.data()),
-                       static_cast<int>(text.size()), &extents);
-    return static_cast<int>(extents.xOff);
+    int width = 0;
+    for_each_font_run(text, size_type, [&](XftFont* font, const string& run) {
+      XGlyphInfo extents{};
+      XftTextExtentsUtf8(display, font, reinterpret_cast<const FcChar8*>(run.data()),
+                         static_cast<int>(run.size()), &extents);
+      width += extents.xOff;
+    });
+    return width;
 #else
     return static_cast<int>(utf8_to_codepoints(text).size()) * (size_type == 0 ? 28 : 16);
 #endif
@@ -1736,7 +1859,15 @@ class picker_window {
     else {
       draw_centered(attr.height - 82, "eligible words: " + to_string(words.size()), 2);
     }
+    draw_centered(36, known_words_label(), 2);
     draw_centered(attr.height - 52, "space/n: next     r: hide answers     q/f7: quit", 2);
+  }
+
+  string known_words_label() const {
+    const double percent = total_words ? 100.0 * static_cast<double>(known_words) / total_words : 0.0;
+    char buffer[96];
+    std::snprintf(buffer, sizeof(buffer), "known words: %.1f%%  (%zu/%zu)", percent, known_words, total_words);
+    return buffer;
   }
 
   void close() {
@@ -1757,6 +1888,12 @@ class picker_window {
       if (font_small) {
         XftFontClose(display, font_small);
         font_small = nullptr;
+      }
+      for (XftFont** font : {&latin_large, &latin_medium, &latin_small}) {
+        if (*font) {
+          XftFontClose(display, *font);
+          *font = nullptr;
+        }
       }
       if (xft_draw_color.pixel || xft_draw_color.color.alpha) {
         XftColorFree(display, DefaultVisual(display, screen), DefaultColormap(display, screen),
@@ -1813,8 +1950,9 @@ int main(int argc, char** argv) {
   const string resolved_config_path =
       absolute(expand_home_prefix(config_path)).lexically_normal().string();
 
-  const app_config config = load_config(resolved_config_path);
+  app_config config = load_config(resolved_config_path);
   logQ("config file:", resolved_config_path);
+  config.anki_collection_path = snapshot_collection(config.anki_collection_path);
   if (list_note_types) {
     logQ(describe_models(load_models_from_collection(config.anki_collection_path)));
     return 0;
@@ -1839,7 +1977,14 @@ int main(int argc, char** argv) {
   vector<vocab_word> eligible;
   size_t rejected_no_known_kanji = 0;
   size_t rejected_reading = 0;
+  size_t known_words = 0;
   for (const auto& word : vocab) {
+    if (!is_valid_written_form(word.written)) {
+      if (count_only_word_known(word, learned)) {
+        ++known_words;
+      }
+      continue;
+    }
     bool all_known = true;
     for (const auto& kanji : word.kanji) {
       if (!learned.count(kanji) || learned.at(kanji).readings.empty()) {
@@ -1856,10 +2001,12 @@ int main(int argc, char** argv) {
       continue;
     }
     eligible.push_back(word);
+    ++known_words;
   }
   logE();
   logW(LL_INFO, "vocabulary rows:", vocab.size());
   logW(LL_INFO, "eligible words:", eligible.size());
+  logW(LL_INFO, "known words:", to_string(known_words) + "/" + to_string(vocab.size()));
   logW(LL_INFO, "rejected for unknown kanji:", rejected_no_known_kanji);
   logW(LL_INFO, "rejected for unsupported reading segmentation:", rejected_reading);
   if (eligible.empty()) {
@@ -1868,7 +2015,7 @@ int main(int argc, char** argv) {
          "anki review state");
     return 1;
   }
-  picker_window app(eligible);
+  picker_window app(eligible, known_words, vocab.size());
   app.run();
   return 0;
 }

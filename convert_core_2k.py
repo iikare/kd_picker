@@ -54,8 +54,8 @@ def strip_html(value: str) -> str:
 
 parser = argparse.ArgumentParser(
     description=(
-        "convert CORE2k CSV to TSV, allowing words with kanji plus "
-        "hiragana/katakana while excluding single-kanji-only entries."
+        "convert CORE2k CSV to TSV, keeping every word -- kd_picker only quizzes "
+        "words mixing kanji and kana but counts all of them."
     )
 )
 parser.add_argument("input_csv", help="path to CSV ")
@@ -96,12 +96,14 @@ with input_path.open("r", encoding="utf-8-sig", newline="") as input_file:
             meaning = strip_html(row[2])
             if input_rows == 1 and written.lower() in {"word", "vocabulary", "expression", "表記"}:
                 continue
-            if is_single_kanji_only(written):
-                skipped_single_kanji += 1
-                continue
-            if not is_valid_written_form(written):
+            # every word is kept for the known/total count, the picker filters its own candidates.
+            if not written:
                 skipped_written += 1
                 continue
+            if is_single_kanji_only(written):
+                skipped_single_kanji += 1
+            elif not is_valid_written_form(written):
+                skipped_written += 1
             if not is_kana_reading(reading):
                 skipped_reading += 1
                 continue
@@ -115,8 +117,8 @@ with input_path.open("r", encoding="utf-8-sig", newline="") as input_file:
             kept_rows += 1
 
 print(f"rows read: {input_rows}")
-print(f"mixed-script vocabulary rows written: {kept_rows}")
+print(f"vocabulary rows written: {kept_rows}")
 print(f"skipped rows without 3 columns: {skipped_shape}")
-print(f"skipped single-kanji-only entries: {skipped_single_kanji}")
-print(f"skipped unsupported written forms: {skipped_written}")
+print(f"single-kanji-only entries (count only): {skipped_single_kanji}")
+print(f"kana-only or other written forms (count only): {skipped_written}")
 print(f"skipped non-kana readings: {skipped_reading}")
