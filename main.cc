@@ -1631,9 +1631,9 @@ class picker_window {
     xft_draw_color = make_xft_color("#111111");
     xft_draw =
         XftDrawCreate(display, window, DefaultVisual(display, screen), DefaultColormap(display, screen));
-    font_large = XftFontOpenName(display, screen, "sans:lang=ja:size=42");
-    font_medium = XftFontOpenName(display, screen, "sans:lang=ja:size=23");
-    font_small = XftFontOpenName(display, screen, "sans:lang=ja:size=14");
+    font_large = XftFontOpenName(display, screen, "Noto Sans CJK JP,sans:lang=ja:size=42");
+    font_medium = XftFontOpenName(display, screen, "Noto Sans CJK JP,sans:lang=ja:size=23");
+    font_small = XftFontOpenName(display, screen, "Noto Sans CJK JP,sans:lang=ja:size=14");
     latin_large = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=46");
     latin_medium = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=27");
     latin_small = XftFontOpenName(display, screen, "Yanone Kaffeesatz:size=17");
