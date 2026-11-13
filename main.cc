@@ -1625,6 +1625,9 @@ class picker_window {
                                  BlackPixel(display, screen), WhitePixel(display, screen));
     XStoreName(display, window, "kd_picker");
     XSelectInput(display, window, ExposureMask | KeyPressMask | StructureNotifyMask);
+    // without this, i3's kill destroys the window but leaves the process blocked in XNextEvent.
+    wm_delete_window = XInternAtom(display, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(display, window, &wm_delete_window, 1);
     gc = XCreateGC(display, window, 0, nullptr);
     XSetForeground(display, gc, BlackPixel(display, screen));
 #if KD_PICKER_HAVE_XFT
@@ -1674,6 +1677,14 @@ class picker_window {
       else if (ev.type == ConfigureNotify) {
         draw();
       }
+      else if (ev.type == ClientMessage && static_cast<Atom>(ev.xclient.data.l[0]) == wm_delete_window) {
+        running = false;
+      }
+      else if (ev.type == DestroyNotify && ev.xdestroywindow.window == window) {
+        // the window is already gone, so close() must not destroy it again.
+        window = 0;
+        running = false;
+      }
       else if (ev.type == KeyPress) {
         KeySym key = XLookupKeysym(&ev.xkey, 0);
         if (key == XK_q || key == XK_Escape || key == XK_F7) {
@@ -1712,6 +1723,7 @@ class picker_window {
   Display* display = nullptr;
   int screen = 0;
   Window window = 0;
+  Atom wm_delete_window = 0;
   GC gc = 0;
 #if KD_PICKER_HAVE_XFT
   XftDraw* xft_draw = nullptr;
